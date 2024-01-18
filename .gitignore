@@ -9,3 +9,6 @@ build
 .DS_Store
 
 /private/
+
+qwen
+output_qwen

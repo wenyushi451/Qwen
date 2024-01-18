@@ -51,8 +51,14 @@ class TrainingArguments(transformers.TrainingArguments):
 
 
 @dataclass
+class TaskArguments:
+    system_message_path: str = field()
+    system_message: Optional[str] = field(default=None)
+
+
+@dataclass
 class LoraArguments:
-    lora_r: int = 64
+    lora_r: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_target_modules: List[str] = field(
@@ -179,12 +185,12 @@ def preprocess(
 class SupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int):
+    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int, system_message: str):
         super(SupervisedDataset, self).__init__()
 
         rank0_print("Formatting inputs...")
         sources = [example["conversations"] for example in raw_data]
-        data_dict = preprocess(sources, tokenizer, max_len)
+        data_dict = preprocess(sources, tokenizer, max_len, system_message)
 
         self.input_ids = data_dict["input_ids"]
         self.labels = data_dict["labels"]
@@ -204,10 +210,11 @@ class SupervisedDataset(Dataset):
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int):
+    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int, system_message: str):
         super(LazySupervisedDataset, self).__init__()
         self.tokenizer = tokenizer
         self.max_len = max_len
+        self.system_message = system_message
 
         rank0_print("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
@@ -233,20 +240,23 @@ class LazySupervisedDataset(Dataset):
 
 
 def make_supervised_data_module(
-    tokenizer: transformers.PreTrainedTokenizer, data_args, max_len,
+    tokenizer: transformers.PreTrainedTokenizer, data_args, max_len, task_args
 ) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     dataset_cls = (
         LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
     )
     rank0_print("Loading data...")
+    with open(task_args.system_message_path, "r") as file:
+        task_args.system_message = file.readlines()
+    rank0_print(f"system_message:{task_args.system_message}")
 
     train_json = json.load(open(data_args.data_path, "r"))
-    train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len)
+    train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len, system_message=task_args.system_message)
 
     if data_args.eval_data_path:
         eval_json = json.load(open(data_args.eval_data_path, "r"))
-        eval_dataset = dataset_cls(eval_json, tokenizer=tokenizer, max_len=max_len)
+        eval_dataset = dataset_cls(eval_json, tokenizer=tokenizer, max_len=max_len, system_message=task_args.system_message)
     else:
         eval_dataset = None
 
@@ -257,13 +267,14 @@ def train():
     global local_rank
 
     parser = transformers.HfArgumentParser(
-        (ModelArguments, DataArguments, TrainingArguments, LoraArguments)
+        (ModelArguments, DataArguments, TrainingArguments, LoraArguments, TaskArguments)
     )
     (
         model_args,
         data_args,
         training_args,
         lora_args,
+        task_args,
     ) = parser.parse_args_into_dataclasses()
 
     # This serves for single-gpu qlora.
@@ -356,13 +367,14 @@ def train():
 
     # Load data
     data_module = make_supervised_data_module(
-        tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length
+        tokenizer=tokenizer, data_args=data_args, max_len=training_args.model_max_length, task_args=task_args,
     )
 
     # Start trainner
     trainer = Trainer(
         model=model, tokenizer=tokenizer, args=training_args, **data_module
     )
+    # import pdb; pdb.set_trace()
 
     trainer.train()
     trainer.save_state()

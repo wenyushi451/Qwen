@@ -1,10 +1,10 @@
 #!/bin/bash
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-MODEL="Qwen/Qwen-7B" # Set the path if you do not want to load from huggingface directly
+MODEL="Qwen/Qwen-1_8B-Chat" # Set the path if you do not want to load from huggingface directly
 # ATTENTION: specify the path to your training data, which should be a json file consisting of a list of conversations.
 # See the section for finetuning in README for more information.
-DATA="path_to_data"
+DATA="data/nlu.json"
 
 function usage() {
     echo '
@@ -34,15 +34,17 @@ while [[ "$1" != "" ]]; do
     shift
 done
 
-export CUDA_VISIBLE_DEVICES=0
+# export CUDA_VISIBLE_DEVICES=0
 
-python finetune.py \
+deepspeed --include localhost:0,1 finetune.py \
   --model_name_or_path $MODEL \
   --data_path $DATA \
-  --bf16 True \
+  --system_message_path tasks/nlu_sp.txt \
+  --fp16 True \
+  --deepspeed finetune/ds_config_zero2.json \
   --output_dir output_qwen \
   --num_train_epochs 5 \
-  --per_device_train_batch_size 2 \
+  --per_device_train_batch_size 4 \
   --per_device_eval_batch_size 1 \
   --gradient_accumulation_steps 8 \
   --evaluation_strategy "no" \
