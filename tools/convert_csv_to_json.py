@@ -32,7 +32,7 @@ def convert_csv_to_json_and_save(csv_file_path, json_file_path):
       }
     ]
     """
-    origin_datas = pd.read_csv(csv_file_path, usecols=["uuid", "input_query","nlu"]).values.tolist()
+    origin_datas = pd.read_csv(csv_file_path, usecols=["uuid", "input_query","nlu"]).dropna().values.tolist()
     datas = []
     for n, (uuid, input_query, nlu_result) in enumerate(origin_datas, start=1):
         print(f"进度: {n}/{len(origin_datas)}", end="\r")
